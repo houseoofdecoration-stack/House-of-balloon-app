@@ -2,7 +2,6 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>House of Balloons CRM</title>
 <meta name="application-name" content="House of Balloons CRM">
@@ -381,6 +380,15 @@ button:active,a.cb:active,a.ib:active,.ib:active,.chip:active,.sp:active,.fb:act
 <nav>
 <button data-a="tab" data-t="home">Home</button><button data-a="tab" data-t="chats">Chats<span id="bd" class="bd"></span></button><button data-a="tab" data-t="tasks">Follow-ups</button><button data-a="tab" data-t="settings">Settings</button>
 </nav>
+<script>window.cloudReady=new Promise(r=>{window.__cr=r})</script>
+<script type="module" src="script.js"></script>
+<script type="module">
+try{
+const {getApp}=await import("https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js");
+const F=await import("https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js");
+window.__cr({db:F.getFirestore(getApp()),collection:F.collection,doc:F.doc,setDoc:F.setDoc,deleteDoc:F.deleteDoc,onSnapshot:F.onSnapshot});
+}catch(e){console.error("Cloud init failed",e);window.__cr(null)}
+</script>
 <script>
 const LOCS=["Gurgaon","Delhi","Noida","Ghaziabad"];
 const DEFP=["Birthday Decor","Balloon Decoration","Event Planning","Furniture Sales"];
@@ -524,7 +532,7 @@ function start(){unlocked=true;$("nav").style.display="";render();if(!inited){in
 async function api(path,o={}){const w=INT.wa;if(!w.on||!/^https:\/\//i.test(w.url||""))throw new Error("Backend not connected");const c=new AbortController(),to=setTimeout(()=>c.abort(),path==="/send-media"?12e4:2e4);try{const r=await fetch(w.url.replace(/\/$/,"")+path,{...o,signal:c.signal,headers:{"X-Api-Key":w.key||"",...(o.headers||{})}});if(!r.ok)throw new Error("HTTP "+r.status);const t=await r.text();return t?JSON.parse(t):{}}finally{clearTimeout(to)}}
 const JH={"Content-Type":"application/json"};
 function fire(ev,data){(INT.plugins||[]).forEach(p=>{if(/^https:\/\//i.test(p.url))fetch(p.url,{method:"POST",headers:{...JH,...(p.key?{"X-Api-Key":p.key}:{})},body:JSON.stringify({event:ev,data,ts:Date.now(),app:"house-of-balloons-crm"})}).catch(()=>{})})}
-function mk(name,phone,src,loc,ts){const l={id:uid(),name:name||phone,phone,loc:LOCS.includes(loc)?loc:(fLoc==="All"?LOCS[0]:fLoc),venue:"",pipe:PIPES[0],stage:stages()[0].n,value:0,ts:ts||Date.now(),evS:0,evE:0,ret:false,unread:0,notes:[],msgs:[],src,labels:[],tags:[]};S.leads.push(l);fire("lead_created",{name:l.name,phone});return l}
+function mk(name,phone,src,loc,ts){const k10=last10(phone||""),l={id:k10.length===10?"p"+k10:uid(),name:name||phone,phone,loc:LOCS.includes(loc)?loc:(fLoc==="All"?LOCS[0]:fLoc),venue:"",pipe:PIPES[0],stage:stages()[0].n,value:0,ts:ts||Date.now(),evS:0,evE:0,ret:false,unread:0,notes:[],msgs:[],src,labels:[],tags:[]};S.leads.push(l);fire("lead_created",{name:l.name,phone});return l}
 async function retryMedia(l,m){try{let ok=true;for(const a of m.att){const b=await idbGet(a.id);if(!b){ok=false;continue}const fd=new FormData();fd.append("phone",l.phone);fd.append("files",new File([b],a.n,{type:a.t}));await api("/send-media",{method:"POST",body:fd})}m.st=ok?"sent":"failed"}catch(e){m.st="failed"}save()}
 function notif(l,t){try{if(!document.hidden||!window.Notification||Notification.permission!=="granted"||!navigator.serviceWorker)return;navigator.serviceWorker.ready.then(r=>r.showNotification(l.name,{body:String(t).slice(0,100),icon:"icon-192.png",tag:"hob-"+l.id,data:{id:l.id}})).catch(()=>{})}catch(e){}}
 async function waSend(l,t,m){try{await api("/send",{method:"POST",headers:JH,body:JSON.stringify({phone:l.phone,text:t})});m.st="sent"}catch(e){m.st="failed"}save()}
@@ -544,10 +552,61 @@ function integ(){const rows=[["wa","💬 WhatsApp"],["meta","📣 Meta lead ads"
   <div class="card"><div class="row"><b class="grow">Plugins</b><button class="act" style="padding:8px 12px" data-a="plg" data-i="-1">+ Add</button></div><div class="tag">Sends lead, stage and message events to the webhook links you add.</div>${(INT.plugins||[]).map((p,i)=>`<div class="row" style="margin-top:8px"><span class="grow">${esc(p.n)}</span><button class="ib" data-a="plg" data-i="${i}" aria-label="Edit plugin">✏️</button></div>`).join("")}</div>
   <div class="card"><b>Security</b><div class="tag">User: ${esc((getJ("hobauth",{}).u)||"")} · stays signed in on this device</div><div class="row wrap" style="margin-top:10px;gap:8px"><button class="act" style="padding:12px" data-a="chpw">Change password</button><button class="act" style="padding:12px" data-a="lock">Log out</button></div></div>`}
 let svT=0,qWarn=0;
-function persist(){svT=0;try{if(ref){Promise.resolve(ref.set({leads:S.leads,tasks:S.tasks,stages:S.stages,pipes:S.pipes,labels:S.labels,tags:S.tags,btns:S.btns})).catch(()=>{})}else localStorage.setItem("hob2",JSON.stringify(S))}catch(e){if(Date.now()-qWarn>6e4){qWarn=Date.now();try{alert("Storage is full or blocked. Export a backup from the menu and delete old leads.")}catch(x){}}}}
+function persist(){svT=0;try{cloudPush();if(ref){Promise.resolve(ref.set({leads:S.leads,tasks:S.tasks,stages:S.stages,pipes:S.pipes,labels:S.labels,tags:S.tags,btns:S.btns})).catch(()=>{})}else localStorage.setItem("hob2",JSON.stringify(S))}catch(e){if(Date.now()-qWarn>6e4){qWarn=Date.now();try{alert("Storage is full or blocked. Export a backup from the menu and delete old leads.")}catch(x){}}}}
 function flush(){if(svT){clearTimeout(svT);persist()}}
 function save(){if(!svT)svT=setTimeout(persist,300);render()}
 addEventListener("pagehide",flush);document.addEventListener("visibilitychange",()=>{if(document.hidden)flush()});
+let CL=null,clKn=new Map(),clMeta="",clBoot=0,clReady=false;
+const clSL=()=>{try{localStorage.setItem("hob2",JSON.stringify(S))}catch(e){}};
+function clRender(){const a=document.activeElement;if(a&&/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)){setTimeout(clRender,2500);return}render()}
+const clMetaStr=()=>JSON.stringify({tasks:S.tasks,stages:S.stages,pipes:S.pipes,labels:S.labels,tags:S.tags,btns:S.btns});
+function cloudPush(){
+  if(!CL||!clReady)return;
+  try{
+    const {db,doc,setDoc,deleteDoc}=CL,m=clMetaStr();
+    if(m!==clMeta){S.mu=Date.now();clMeta=m;setDoc(doc(db,"hob_meta","state"),{j:m,u:S.mu}).catch(e=>console.warn("cloud meta",e))}
+    const ids=new Set();
+    S.leads.forEach(l=>{
+      ids.add(l.id);
+      const {u,...r}=l;let j=JSON.stringify(r);
+      if(j.length>900000){delete r.photo;j=JSON.stringify(r);if(j.length>900000)return}
+      const k=clKn.get(l.id);if(k&&k.j===j)return;
+      l.u=Date.now();clKn.set(l.id,{j,u:l.u});
+      setDoc(doc(db,"hob_leads",l.id),{j,u:l.u}).catch(e=>console.warn("cloud lead",e))
+    });
+    for(const id of [...clKn.keys()]){if(!ids.has(id)){clKn.delete(id);deleteDoc(doc(db,"hob_leads",id)).catch(()=>{})}}
+  }catch(e){console.warn("cloudPush",e)}
+}
+async function startCloud(){
+  try{CL=await window.cloudReady}catch(e){}
+  if(!CL){console.warn("Cloud sync unavailable - working on this device only");return}
+  const {db,collection,doc,onSnapshot}=CL;let f1=true,f2=true;
+  const boot=()=>{if(++clBoot===2){clReady=true;console.log("Cloud sync ready");cloudPush()}};
+  onSnapshot(doc(db,"hob_meta","state"),sn=>{
+    if(sn.exists()){const d=sn.data();
+      if(d.j===clMetaStr()){clMeta=d.j;S.mu=d.u||S.mu||0}
+      else if((S.mu||0)<=(d.u||0)){try{const m=JSON.parse(d.j);S.tasks=m.tasks||[];S.stages=m.stages||S.stages;S.pipes=m.pipes;S.labels=m.labels;S.tags=m.tags;S.btns=m.btns;S.mu=d.u||0;norm();clMeta=clMetaStr();clSL();clRender()}catch(e){}}
+    }
+    if(f1){f1=false;boot()}
+  },e=>console.warn("meta sync",e));
+  onSnapshot(collection(db,"hob_leads"),sn=>{
+    let ch=false;
+    sn.docChanges().forEach(c=>{
+      const id=c.doc.id;
+      if(c.type==="removed"){clKn.delete(id);const i=S.leads.findIndex(x=>x.id===id);if(i>=0){S.leads.splice(i,1);ch=true}return}
+      const d=c.doc.data(),k=clKn.get(id);
+      if(k&&k.j===d.j)return;
+      const i=S.leads.findIndex(x=>x.id===id);
+      if(i>=0&&(S.leads[i].u||0)>(d.u||0))return;
+      let o;try{o=JSON.parse(d.j)}catch(e){return}
+      o.id=id;o.u=d.u||0;
+      if(i>=0)S.leads[i]=o;else S.leads.push(o);
+      clKn.set(id,{j:d.j,u:o.u});ch=true
+    });
+    if(ch){clSL();clRender()}
+    if(f2){f2=false;boot()}
+  },e=>console.warn("leads sync",e));
+}
 async function init(){
   norm();let db=null;
   try{ db=window.claude?await claude.use("db"):null; }catch(e){}
@@ -557,7 +616,7 @@ async function init(){
   }else{
     try{ const raw=localStorage.getItem("hob2"); if(raw){S=JSON.parse(raw);S.stages=S.stages||DEF;}norm(); }catch(e){}
   }
-  render();
+  render();startCloud();
 }
 function pred(k){
   const t=sod(Date.now()), ex=S.stages.filter(s=>s.x).map(s=>s.n), bk=(l,d)=>l.evS&&!ex.includes(l.stage)&&l.evS<=d&&(l.evE||l.evS)>=d;
@@ -783,9 +842,7 @@ document.addEventListener("click",e=>{
       if(DS.st&&DS.st!==l.ls){l.ls=DS.st; fire("lead_status",{phone:l.phone,status:l.ls});}
       if(due){S.tasks.push({id:uid(),title:"Follow up with "+l.name,type:"Follow-up",leadId:l.id,due,done:false}); fire("followup_scheduled",{phone:l.phone,due});}
       if(nt){l.notes=l.notes||[]; l.notes.push({t:nt,ts:Date.now()});}
-      window.saveLeadToCloud(l);
-      DS=null; a.closest(".sheet").remove();window.saveLeadToCloud(l);
-      save();} break;
+      DS=null; a.closest(".sheet").remove(); save();} break;
     case"vc": {const l=leadOf(openId); if(l){l.vc=d.v; save(); fire("venue_status",{phone:l.phone,status:d.v||"not_set"});}} break;
     case"pipe": {const l=leadOf(openId); if(l){l.pipe=d.v; save();}} break;
     case"setstage": {const l=leadOf(openId); if(l){l.stage=d.v; save(); fire("stage_changed",{phone:l.phone,stage:l.stage});}} break;
@@ -904,7 +961,5 @@ document.addEventListener("visibilitychange",()=>{if(!document.hidden){sync();ch
 setInterval(chkUpd,3e5);setTimeout(chkUpd,4000);
 setTimeout(()=>sessOk()?start():gate(),250);
 </script>
-<script type="module" src="script.js"></script>
-
 </body>
 </html>
