@@ -2,12 +2,12 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebas
 import { getFirestore, collection, addDoc, getDocs, onSnapshot, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
 const firebaseConfig = {
-  apiKey: "AIzaSyDmHZw0NogvE9CC1sbWUngRROFXo...",
+  apiKey: "AIzaSyDmHZw0NogvE9CClsbWUngRROFXoVRB_aM",
   authDomain: "house-of-balloon-crm.firebaseapp.com",
   projectId: "house-of-balloon-crm",
-  storageBucket: "house-of-balloon-crm.appspot.com",
+  storageBucket: "house-of-balloon-crm.firebasestorage.app",
   messagingSenderId: "38190937524",
-  appId: "1:38190937524:web:2e89c3e7c1f13863..."
+  appId: "1:38190937524:web:2e89c3e7c1f13863c12ee1"
 };
 
 const app = initializeApp(firebaseConfig);
