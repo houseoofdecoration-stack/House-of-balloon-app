@@ -783,7 +783,9 @@ document.addEventListener("click",e=>{
       if(DS.st&&DS.st!==l.ls){l.ls=DS.st; fire("lead_status",{phone:l.phone,status:l.ls});}
       if(due){S.tasks.push({id:uid(),title:"Follow up with "+l.name,type:"Follow-up",leadId:l.id,due,done:false}); fire("followup_scheduled",{phone:l.phone,due});}
       if(nt){l.notes=l.notes||[]; l.notes.push({t:nt,ts:Date.now()});}
-      DS=null; a.closest(".sheet").remove(); save();} break;
+      window.saveLeadToCloud(l);
+      DS=null; a.closest(".sheet").remove();window.saveLeadToCloud(l);
+      save();} break;
     case"vc": {const l=leadOf(openId); if(l){l.vc=d.v; save(); fire("venue_status",{phone:l.phone,status:d.v||"not_set"});}} break;
     case"pipe": {const l=leadOf(openId); if(l){l.pipe=d.v; save();}} break;
     case"setstage": {const l=leadOf(openId); if(l){l.stage=d.v; save(); fire("stage_changed",{phone:l.phone,stage:l.stage});}} break;
