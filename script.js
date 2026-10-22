@@ -16,7 +16,40 @@ const firebaseConfig = {
   storageBucket: "house-of-balloon-crm.firebasestorage.app",
   messagingSenderId: "38190937524",
   appId: "1:38190937524:web:2e89c3e7c1f13863c12ee1"
+};import { getFirestore, collection, addDoc, getDocs, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+
+const db = getFirestore(initializeApp(firebaseConfig));
+const leadsCol = collection(db, "leads");
+
+// 1. क्लाउड पर लीड सेव करने का फंक्शन
+window.saveLeadToCloud = async function(leadData) {
+    try {
+        const docRef = await addDoc(leadsCol, {
+            ...leadData,
+            createdAt: serverTimestamp()
+        });
+        console.log("Lead saved with ID: ", docRef.id);
+        return docRef.id;
+    } catch (e) {
+        console.error("Error adding lead: ", e);
+    }
 };
+
+// 2. क्लाउड से लीड्स लोड करने का फंक्शन
+window.loadLeadsFromCloud = async function() {
+    try {
+        const querySnapshot = await getDocs(leadsCol);
+        const leads = [];
+        querySnapshot.forEach((doc) => {
+            leads.push({ id: doc.id, ...doc.data() });
+        });
+        return leads;
+    } catch (e) {
+        console.error("Error loading leads: ", e);
+        return [];
+    }
+};
+
 
 // Initialize Firebase & Cloud Firestore
 const app = initializeApp(firebaseConfig);
