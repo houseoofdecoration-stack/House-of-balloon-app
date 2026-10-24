@@ -21,6 +21,7 @@ const db = getFirestore(app);
 window.firebaseApp = app;
 window.db = db;
 
+// लीड ऑब्जेक्ट पार्स करने का हेल्पर
 function parseLeadDoc(doc) {
   const data = doc.data();
   let l = {};
@@ -35,37 +36,60 @@ function parseLeadDoc(doc) {
   return l;
 }
 
+// मुख्य ऐप स्टेट में लीड्स अपडेट करने का फंक्शन
+function syncToUI(cloudLeads) {
+  const targetS = window.S || (typeof S !== "undefined" ? S : null);
+  if (targetS) {
+    targetS.leads = cloudLeads;
+    if (typeof window.fLoc !== "undefined") window.fLoc = "All";
+    else if (typeof fLoc !== "undefined") fLoc = "All";
+    
+    if (typeof window.render === "function") window.render();
+    else if (typeof render === "function") render();
+    return true;
+  }
+  return false;
+}
+
 async function initLeadsSync() {
   try {
     const colRef = collection(db, "hob_leads");
+    
+    // 1. ऐप लोड होते ही Firestore से सभी लीड्स लोड करें
     const snap = await getDocs(colRef);
     const cloudLeads = [];
     snap.forEach(d => cloudLeads.push(parseLeadDoc(d)));
     
-    if (window.S) {
-      window.S.leads = cloudLeads;
-      if (typeof window.fLoc !== "undefined") window.fLoc = "All";
-      if (typeof window.render === "function") window.render();
-    }
+    // मुख्य ऐप स्टेट तैयार होने का इंतज़ार करके डेटा सेट करें
+    let attempts = 0;
+    const checker = setInterval(() => {
+      attempts++;
+      if (syncToUI(cloudLeads) || attempts > 30) {
+        clearInterval(checker);
+      }
+    }, 150);
 
+    // 2. आगे आने वाली हर नई लीड के लिए रियल-टाइम लिस्नर
     onSnapshot(colRef, (snapshot) => {
       snapshot.docChanges().forEach((change) => {
         if (change.type === "added" || change.type === "modified") {
           const lead = parseLeadDoc(change.doc);
-          if (window.S && Array.isArray(window.S.leads)) {
-            const idx = window.S.leads.findIndex(l => l.id === lead.id);
+          const targetS = window.S || (typeof S !== "undefined" ? S : null);
+          if (targetS && Array.isArray(targetS.leads)) {
+            const idx = targetS.leads.findIndex(l => l.id === lead.id);
             if (idx >= 0) {
-              window.S.leads[idx] = { ...window.S.leads[idx], ...lead };
+              targetS.leads[idx] = { ...targetS.leads[idx], ...lead };
             } else {
-              window.S.leads.unshift(lead);
+              targetS.leads.unshift(lead);
             }
             if (typeof window.render === "function") window.render();
+            else if (typeof render === "function") render();
           }
         }
       });
     });
     
-    console.log("Firebase sync fully operational!");
+    console.log("Firestore permanent auto-sync active!");
   } catch (err) {
     console.error("Firestore sync error:", err);
   }
