@@ -1,13 +1,8 @@
-import { initializeApp, getApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
 import { 
   getFirestore, 
   collection, 
-  addDoc, 
-  getDocs, 
-  onSnapshot, 
-  serverTimestamp, 
-  query, 
-  orderBy 
+  onSnapshot 
 } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
 const firebaseConfig = {
@@ -19,40 +14,48 @@ const firebaseConfig = {
   appId: "1:38190937524:web:2e89c3e7c1f13863c12ee1"
 };
 
-// Initialize Firebase
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
-// विंडो पर सेट करें ताकि मुख्य ऐप इसे सीधे पढ़ सके
 window.firebaseApp = app;
 window.db = db;
 
-// hob_leads कलेक्शन का रियल-टाइम लिस्नर
 try {
-  const q = collection(db, "hob_leads");
-  onSnapshot(q, (snapshot) => {
+  const colRef = collection(db, "hob_leads");
+  onSnapshot(colRef, (snapshot) => {
     snapshot.docChanges().forEach((change) => {
-      const data = change.doc.data();
-      const lead = { id: change.doc.id, ...data };
-      
-      if (typeof window.onCloudLead === "function") {
-        window.onCloudLead(lead);
-      } else if (window.S && Array.isArray(window.S.leads)) {
-        const idx = window.S.leads.findIndex(l => l.id === lead.id);
+      const docData = change.doc.data();
+      let leadObj = {};
+
+      if (docData.j && typeof docData.j === "string") {
+        try {
+          leadObj = JSON.parse(docData.j);
+        } catch (e) {
+          leadObj = { ...docData };
+        }
+      } else {
+        leadObj = { ...docData };
+      }
+
+      leadObj.id = leadObj.id || change.doc.id;
+      leadObj.u = docData.u || leadObj.u || Date.now();
+
+      if (!leadObj.loc) leadObj.loc = "Gurgaon";
+
+      if (window.S && Array.isArray(window.S.leads)) {
+        const idx = window.S.leads.findIndex(l => l.id === leadObj.id);
         if (idx >= 0) {
-          window.S.leads[idx] = { ...window.S.leads[idx], ...lead };
+          window.S.leads[idx] = { ...window.S.leads[idx], ...leadObj };
         } else {
-          window.S.leads.unshift(lead);
+          window.S.leads.unshift(leadObj);
         }
-        if (typeof window.render === "function") {
-          window.render();
-        }
+
+        if (typeof window.fLoc !== "undefined") window.fLoc = "All";
+        if (typeof window.render === "function") window.render();
       }
     });
-  }, (err) => {
-    console.error("Firestore snapshot error:", err);
   });
-  console.log("Firestore hob_leads listener attached successfully!");
+  console.log("Firestore hob_leads parsed listener active!");
 } catch (e) {
-  console.error("Failed to attach Firestore listener:", e);
+  console.error("Firestore listener error:", e);
 }
