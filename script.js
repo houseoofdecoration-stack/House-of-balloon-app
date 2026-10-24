@@ -2,6 +2,7 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebas
 import { 
   getFirestore, 
   collection, 
+  getDocs, 
   onSnapshot 
 } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
@@ -20,42 +21,54 @@ const db = getFirestore(app);
 window.firebaseApp = app;
 window.db = db;
 
-try {
-  const colRef = collection(db, "hob_leads");
-  onSnapshot(colRef, (snapshot) => {
-    snapshot.docChanges().forEach((change) => {
-      const docData = change.doc.data();
-      let leadObj = {};
-
-      if (docData.j && typeof docData.j === "string") {
-        try {
-          leadObj = JSON.parse(docData.j);
-        } catch (e) {
-          leadObj = { ...docData };
-        }
-      } else {
-        leadObj = { ...docData };
-      }
-
-      leadObj.id = leadObj.id || change.doc.id;
-      leadObj.u = docData.u || leadObj.u || Date.now();
-
-      if (!leadObj.loc) leadObj.loc = "Gurgaon";
-
-      if (window.S && Array.isArray(window.S.leads)) {
-        const idx = window.S.leads.findIndex(l => l.id === leadObj.id);
-        if (idx >= 0) {
-          window.S.leads[idx] = { ...window.S.leads[idx], ...leadObj };
-        } else {
-          window.S.leads.unshift(leadObj);
-        }
-
-        if (typeof window.fLoc !== "undefined") window.fLoc = "All";
-        if (typeof window.render === "function") window.render();
-      }
-    });
-  });
-  console.log("Firestore hob_leads parsed listener active!");
-} catch (e) {
-  console.error("Firestore listener error:", e);
+function parseLeadDoc(doc) {
+  const data = doc.data();
+  let l = {};
+  if (data.j && typeof data.j === "string") {
+    try { l = JSON.parse(data.j); } catch(e) { l = { ...data }; }
+  } else {
+    l = { ...data };
+  }
+  l.id = l.id || doc.id;
+  l.u = data.u || l.u || Date.now();
+  if (!l.loc) l.loc = "Gurgaon";
+  return l;
 }
+
+async function initLeadsSync() {
+  try {
+    const colRef = collection(db, "hob_leads");
+    const snap = await getDocs(colRef);
+    const cloudLeads = [];
+    snap.forEach(d => cloudLeads.push(parseLeadDoc(d)));
+    
+    if (window.S) {
+      window.S.leads = cloudLeads;
+      if (typeof window.fLoc !== "undefined") window.fLoc = "All";
+      if (typeof window.render === "function") window.render();
+    }
+
+    onSnapshot(colRef, (snapshot) => {
+      snapshot.docChanges().forEach((change) => {
+        if (change.type === "added" || change.type === "modified") {
+          const lead = parseLeadDoc(change.doc);
+          if (window.S && Array.isArray(window.S.leads)) {
+            const idx = window.S.leads.findIndex(l => l.id === lead.id);
+            if (idx >= 0) {
+              window.S.leads[idx] = { ...window.S.leads[idx], ...lead };
+            } else {
+              window.S.leads.unshift(lead);
+            }
+            if (typeof window.render === "function") window.render();
+          }
+        }
+      });
+    });
+    
+    console.log("Firebase sync fully operational!");
+  } catch (err) {
+    console.error("Firestore sync error:", err);
+  }
+}
+
+initLeadsSync();
