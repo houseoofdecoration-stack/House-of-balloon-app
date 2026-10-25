@@ -960,6 +960,7 @@ async function chkUpd(){if(!/^https?:$/.test(location.protocol))return;try{const
 document.addEventListener("visibilitychange",()=>{if(!document.hidden){sync();chkUpd()}});
 setInterval(chkUpd,3e5);setTimeout(chkUpd,4000);
 setTimeout(()=>sessOk()?start():gate(),250);
-</script>
+</script
+><script type="module" src="script.js"></script>
 </body>
 </html>
