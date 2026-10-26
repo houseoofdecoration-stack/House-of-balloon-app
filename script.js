@@ -1,6 +1,14 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-import {import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-import { getFirestore, collection, addDoc, getDocs, onSnapshot, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+import {
+  getFirestore,
+  collection,
+  addDoc,
+  getDocs,
+  onSnapshot,
+  serverTimestamp,
+  query,
+  orderBy
+} from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyDmHZw0NogvE9CClsbWUngRROFXoVRB_aM",
@@ -13,9 +21,35 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
-const leadsCol = collection(db, "leads");
 
-// 1. क्लाउड में लीड सेव करने के लिए
+window.firebaseApp = app;
+window.db = db;
+
+// Prefer the existing collection used by the app; fall back to "leads" if needed.
+const leadCollectionCandidates = ["hob_leads", "leads"];
+let activeLeadCollectionName = "hob_leads";
+let leadsCol = collection(db, activeLeadCollectionName);
+
+async function resolveLeadCollection() {
+  for (const name of leadCollectionCandidates) {
+    try {
+      const snap = await getDocs(collection(db, name));
+      if (!snap.empty) {
+        activeLeadCollectionName = name;
+        leadsCol = collection(db, name);
+        return name;
+      }
+    } catch (error) {
+      // keep trying other collection names
+    }
+  }
+
+  activeLeadCollectionName = leadCollectionCandidates[0];
+  leadsCol = collection(db, activeLeadCollectionName);
+  return activeLeadCollectionName;
+}
+
+// 1. Save a lead to Firestore
 window.saveLeadToCloud = async function(leadData) {
   try {
     const docRef = await addDoc(leadsCol, {
@@ -26,17 +60,22 @@ window.saveLeadToCloud = async function(leadData) {
     return docRef.id;
   } catch (e) {
     console.error("Cloud Save Error:", e);
+    return null;
   }
 };
 
-// 2. क्लाउड से सारा डेटा मंगाने के लिए
+// 2. Fetch all leads from Firestore
 window.loadLeadsFromCloud = async function() {
   try {
-    const querySnapshot = await getDocs(leadsCol);
+    const collectionName = await resolveLeadCollection();
+    const targetCol = collection(db, collectionName);
+    const querySnapshot = await getDocs(targetCol);
+
     const leads = [];
     querySnapshot.forEach((doc) => {
-      leads.push({ id: doc.id, ...doc.data() });
+      leads.push(parseLeadDoc(doc));
     });
+
     return leads;
   } catch (e) {
     console.error("Cloud Load Error:", e);
@@ -44,38 +83,24 @@ window.loadLeadsFromCloud = async function() {
   }
 };
 
-// 3. लाइव ऑटो-सिंक (ताकि दोनों फोन में तुरंत डेटा दिखे)
+// 3. Live auto-sync
 window.listenToCloudSync = function(onUpdate) {
-  onSnapshot(leadsCol, (snapshot) => {
-    const leads = [];
-    snapshot.forEach((doc) => {
-      leads.push({ id: doc.id, ...doc.data() });
-    });
-    if (onUpdate) onUpdate(leads);
-  });
+  const targetCol = collection(db, activeLeadCollectionName);
+
+  return onSnapshot(
+    targetCol,
+    (snapshot) => {
+      const leads = [];
+      snapshot.forEach((doc) => {
+        leads.push(parseLeadDoc(doc));
+      });
+      if (onUpdate) onUpdate(leads);
+    },
+    (error) => {
+      console.error("Cloud Sync Error:", error);
+    }
+  );
 };
-  getFirestore,
-  collection,
-  getDocs,
-  onSnapshot,
-  query,
-  orderBy
-} from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
-
-const firebaseConfig = {
-  apiKey: "AIzaSyDmHZw0NogvE9CC1sbWUngRROFXoVRB_aM",
-  authDomain: "house-of-balloon-crm.firebaseapp.com",
-  projectId: "house-of-balloon-crm",
-  storageBucket: "house-of-balloon-crm.firebasestorage.app",
-  messagingSenderId: "38190937524",
-  appId: "1:38190937524:web:2e89c3e7c1f13863c12ee1"
-};
-
-const app = initializeApp(firebaseConfig);
-const db = getFirestore(app);
-
-window.firebaseApp = app;
-window.db = db;
 
 // Make.com webhook configuration
 const MAKE_WEBHOOK_URL = window.MAKE_WEBHOOK_URL || "YOUR_MAKE_WEBHOOK_URL_HERE";
@@ -98,7 +123,8 @@ function ensureLeadState() {
 
 function formatLeadPhone(lead) {
   if (!lead || !lead.phone) return "No phone";
-  return String(lead.phone).replace(/\D/g, "").length ? String(lead.phone) : "No phone";
+  const normalized = String(lead.phone).replace(/\D/g, "");
+  return normalized.length ? String(lead.phone) : "No phone";
 }
 
 function renderLeadList() {
@@ -257,7 +283,7 @@ async function sendReplyToMake(leadId, phone, text) {
   return true;
 }
 
-// Safe API helper (generic fetch wrapper with response.ok checks)
+// Safe API helper
 async function api(url, options = {}) {
   const method = (options.method || "GET").toUpperCase();
   const payload = options.body;
@@ -289,7 +315,7 @@ async function api(url, options = {}) {
   }
 }
 
-// Lead object parser: robust against malformed Firestore payloads
+// Lead object parser
 function parseLeadDoc(doc) {
   const data = doc && doc.data ? doc.data() : {};
   let lead = {};
@@ -451,9 +477,6 @@ async function sendReplyFromCRM() {
     console.error("Reply could not be sent to Make.com");
     return;
   }
-
-  // The real message will be written back by Make/Firestore and then
-  // the onSnapshot listener will update the thread.
 }
 
 document.addEventListener("click", (event) => {
@@ -464,15 +487,15 @@ document.addEventListener("click", (event) => {
 
 async function initLeadsSync() {
   try {
-    const colRef = collection(db, "hob_leads");
+    const collectionName = await resolveLeadCollection();
+    const colRef = collection(db, collectionName);
 
     // Initial fetch
     const snap = await getDocs(colRef);
     const cloudLeads = [];
 
     snap.forEach((d) => {
-      const lead = parseLeadDoc(d);
-      cloudLeads.push(lead);
+      cloudLeads.push(parseLeadDoc(d));
     });
 
     // Apply initial leads
@@ -482,47 +505,44 @@ async function initLeadsSync() {
     onSnapshot(
       colRef,
       (snapshot) => {
-        snapshot.docChanges().forEach((change) => {
-          const lead = parseLeadDoc(change.doc);
-
-          if (change.type === "removed") {
-            const currentLeads = ensureLeadState();
-            window.leads = currentLeads.filter((l) => l.id !== lead.id);
-            renderLeadList();
-            return;
-          }
-
-          if (change.type === "added" || change.type === "modified") {
-            const currentLeads = ensureLeadState();
-            const idx = currentLeads.findIndex((l) => l.id === lead.id);
-
-            if (idx >= 0) {
-              currentLeads[idx] = { ...currentLeads[idx], ...lead };
-            } else {
-              currentLeads.unshift(lead);
-            }
-
-            window.leads = currentLeads;
-            renderLeadList();
-          }
+        const nextLeads = [];
+        snapshot.forEach((doc) => {
+          nextLeads.push(parseLeadDoc(doc));
         });
+
+        window.leads = nextLeads;
+        renderLeadList();
       },
       (error) => {
         console.error("Firestore lead sync error:", error);
       }
     );
 
-    console.log("Firestore permanent auto-sync active!");
+    console.log("Firestore permanent auto-sync active on collection:", collectionName);
   } catch (err) {
     console.error("Firestore sync error:", err);
   }
 }
 
-// Startup
-initLeadsSync();
+// Auto-trigger the Firestore fetch/sync when the app loads
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", () => {
+    renderLeadList();
+    initLeadsSync();
 
-window.addEventListener("DOMContentLoaded", () => {
+    const replyInput = document.getElementById("whatsappReplyInput");
+    if (replyInput) {
+      replyInput.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" && !event.shiftKey) {
+          event.preventDefault();
+          sendReplyFromCRM();
+        }
+      });
+    }
+  });
+} else {
   renderLeadList();
+  initLeadsSync();
 
   const replyInput = document.getElementById("whatsappReplyInput");
   if (replyInput) {
@@ -533,4 +553,4 @@ window.addEventListener("DOMContentLoaded", () => {
       }
     });
   }
-});
+}
