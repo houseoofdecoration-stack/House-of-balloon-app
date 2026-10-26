@@ -12,7 +12,7 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
-const leadsCol = collection(db, "leads");
+const leadsCol = collection(db, "hob_leads");
 
 // 1. क्लाउड में लीड सेव करने के लिए
 window.saveLeadToCloud = async function(leadData) {
