@@ -1,9 +1,9 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-import { 
-  getFirestore, 
-  collection, 
-  getDocs, 
-  onSnapshot 
+import {
+  getFirestore,
+  collection,
+  getDocs,
+  onSnapshot
 } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
 const firebaseConfig = {
@@ -21,41 +21,83 @@ const db = getFirestore(app);
 window.firebaseApp = app;
 window.db = db;
 
-// लीड ऑब्जेक्ट पार्स करने का हेल्पर
-function parseLeadDoc(doc) {
-  const data = doc.data();
-  let l = {};
+function parseLeadDoc(docSnap) {
+  if (!docSnap || typeof docSnap.data !== "function") return null;
+
+  const data = docSnap.data() || {};
+  let lead = {};
+
   if (data.j && typeof data.j === "string") {
-    try { l = JSON.parse(data.j); } catch(e) { l = { ...data }; }
+    try {
+      const parsed = JSON.parse(data.j);
+      if (parsed && typeof parsed === "object") {
+        lead = parsed;
+      } else {
+        lead = { ...data };
+      }
+    } catch (e) {
+      lead = { ...data };
+    }
   } else {
-    l = { ...data };
+    lead = { ...data };
   }
-  l.id = l.id || doc.id;
-  l.u = data.u || l.u || Date.now();
-  if (!l.loc) l.loc = "Gurgaon";
-  return l;
+
+  lead.id = lead.id || docSnap.id;
+  lead.u = lead.u || data.u || Date.now();
+  if (!lead.loc) lead.loc = "Gurgaon";
+  return lead;
 }
 
-// मुख्य ऐप स्टेट में लीड्स अपडेट करने का फंक्शन
-function syncToUI(cloudLeads) {
-  const targetS = window.S || (typeof S !== "undefined" ? S : null);
-  if (!targetS || !Array.isArray(targetS.leads)) return false;
+function getTargetState() {
+  if (typeof window !== "undefined" && window.S) return window.S;
+  if (typeof S !== "undefined") return S;
+  return null;
+}
 
-  const merged = new Map((targetS.leads || []).map((lead) => [lead.id, lead]));
-  for (const lead of Array.isArray(cloudLeads) ? cloudLeads : []) {
-    if (!lead || !lead.id) continue;
-    merged.set(lead.id, {
-      ...(merged.get(lead.id) || {}),
-      ...lead
-    });
+function mergeCloudLeads(cloudLeads, targetState) {
+  if (!Array.isArray(cloudLeads)) {
+    return Array.isArray(targetState?.leads) ? [...targetState.leads] : [];
   }
 
-  targetS.leads = [...merged.values()];
-  if (typeof window.fLoc !== "undefined") window.fLoc = "All";
-  else if (typeof fLoc !== "undefined") fLoc = "All";
+  if (!targetState || !Array.isArray(targetState.leads)) {
+    return [...cloudLeads];
+  }
 
-  if (typeof window.render === "function") window.render();
-  else if (typeof render === "function") render();
+  const map = new Map();
+  targetState.leads.forEach((lead) => {
+    if (lead && lead.id) map.set(String(lead.id), lead);
+  });
+
+  cloudLeads.forEach((lead) => {
+    if (lead && lead.id) {
+      map.set(String(lead.id), { ...(map.get(String(lead.id)) || {}), ...lead });
+    }
+  });
+
+  return [...map.values()];
+}
+
+function syncToUI(cloudLeads) {
+  const targetS = getTargetState();
+  if (!targetS) return false;
+
+  targetS.leads = mergeCloudLeads(cloudLeads, targetS);
+
+  if (typeof window !== "undefined") {
+    if (typeof window.fLoc !== "undefined") window.fLoc = "All";
+  } else if (typeof fLoc !== "undefined") {
+    fLoc = "All";
+  }
+
+  if (typeof window.render === "function") {
+    window.render();
+    return true;
+  }
+  if (typeof render === "function") {
+    render();
+    return true;
+  }
+
   return true;
 }
 
@@ -65,11 +107,13 @@ async function initLeadsSync() {
 
     const snap = await getDocs(colRef);
     const cloudLeads = [];
-    snap.forEach((d) => {
+
+    snap.forEach((docSnap) => {
       try {
-        cloudLeads.push(parseLeadDoc(d));
+        const lead = parseLeadDoc(docSnap);
+        if (lead) cloudLeads.push(lead);
       } catch (e) {
-        console.warn("Failed to parse Firestore lead:", d.id, e);
+        console.warn("Failed to parse Firestore lead:", docSnap && docSnap.id, e);
       }
     });
 
@@ -82,17 +126,17 @@ async function initLeadsSync() {
     }, 150);
 
     onSnapshot(colRef, (snapshot) => {
-      const targetS = window.S || (typeof S !== "undefined" ? S : null);
-
+      const targetS = getTargetState();
       if (!targetS || !Array.isArray(targetS.leads)) return;
 
       let changed = false;
 
       snapshot.docChanges().forEach((change) => {
-        const id = change.doc.id;
+        const id = change && change.doc ? change.doc.id : null;
+        if (!id) return;
 
         if (change.type === "removed") {
-          const idx = targetS.leads.findIndex((l) => l.id === id);
+          const idx = targetS.leads.findIndex((l) => String(l.id) === String(id));
           if (idx >= 0) {
             targetS.leads.splice(idx, 1);
             changed = true;
@@ -103,17 +147,17 @@ async function initLeadsSync() {
         if (change.type === "added" || change.type === "modified") {
           try {
             const lead = parseLeadDoc(change.doc);
-            const idx = targetS.leads.findIndex((l) => l.id === lead.id);
+            if (!lead) return;
 
+            const idx = targetS.leads.findIndex((l) => String(l.id) === String(lead.id));
             if (idx >= 0) {
               targetS.leads[idx] = { ...targetS.leads[idx], ...lead };
             } else {
               targetS.leads.unshift(lead);
             }
-
             changed = true;
           } catch (e) {
-            console.warn("Failed to update lead from Firestore:", id, e);
+            console.warn("Failed to update Firestore lead:", id, e);
           }
         }
       });
