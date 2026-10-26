@@ -30,6 +30,66 @@ let activeLeadId = null;
 let threadUnsubscribe = null;
 let currentThreadMessages = [];
 
+// --- Lead list state and renderer ---
+if (!Array.isArray(window.leads)) {
+  window.leads = [];
+}
+
+function ensureLeadState() {
+  if (!Array.isArray(window.leads)) {
+    window.leads = [];
+  }
+  return window.leads;
+}
+
+function formatLeadPhone(lead) {
+  if (!lead || !lead.phone) return "No phone";
+  return String(lead.phone).replace(/\D/g, "").length ? String(lead.phone) : "No phone";
+}
+
+function renderLeadList() {
+  const leadListEl = document.getElementById("leadList");
+  if (!leadListEl) return;
+
+  const leads = ensureLeadState();
+
+  leadListEl.innerHTML = "";
+
+  if (!leads.length) {
+    leadListEl.innerHTML = '<div class="note empty">No leads yet.</div>';
+    return;
+  }
+
+  leads.forEach((lead) => {
+    const card = document.createElement("div");
+    card.className = "mc";
+    card.style.cursor = "pointer";
+    card.innerHTML = `
+      <div class="av">${(lead.name || "N").charAt(0).toUpperCase()}</div>
+      <div class="grow">
+        <b>${(lead.name || "Unnamed lead").replace(/</g, "&lt;")}</b>
+        <div class="tag">${formatLeadPhone(lead)}</div>
+      </div>
+      <div class="mn">
+        <b>${lead.status || "new"}</b>
+        <span>${lead.stage || "Inquiries"}</span>
+      </div>
+    `;
+
+    card.addEventListener("click", () => {
+      if (lead && lead.id) {
+        openLeadChat(lead.id);
+      }
+    });
+
+    leadListEl.appendChild(card);
+  });
+}
+
+// Global compatibility alias
+window.renderLeadList = renderLeadList;
+window.render = renderLeadList;
+
 // Utility: normalize phone numbers to a consistent format
 function normalizePhone(raw) {
   if (!raw) return "";
@@ -209,38 +269,28 @@ function parseLeadDoc(doc) {
 
 // Main app state sync
 function syncToUI(cloudLeads) {
-  const targetS = window.S || (typeof S !== "undefined" ? S : null);
+  const leads = ensureLeadState();
 
-  if (targetS) {
-    if (!Array.isArray(targetS.leads)) {
-      targetS.leads = [];
-    }
-
-    // Merge incoming cloud leads into current local list
-    const existingMap = new Map(targetS.leads.map((lead) => [lead.id, lead]));
-    const merged = [];
-
-    cloudLeads.forEach((lead) => {
-      const existingLead = existingMap.get(lead.id);
-      if (existingLead) {
-        merged.push({ ...existingLead, ...lead });
-      } else {
-        merged.push({ ...lead });
-      }
-    });
-
-    targetS.leads = merged;
-
-    if (typeof window.fLoc !== "undefined") window.fLoc = "All";
-    else if (typeof fLoc !== "undefined") fLoc = "All";
-
-    if (typeof window.render === "function") window.render();
-    else if (typeof render === "function") render();
-
-    return true;
+  if (!Array.isArray(cloudLeads)) {
+    cloudLeads = [];
   }
 
-  return false;
+  const existingMap = new Map(leads.map((lead) => [lead.id, lead]));
+  const merged = [];
+
+  cloudLeads.forEach((lead) => {
+    const existingLead = existingMap.get(lead.id);
+    if (existingLead) {
+      merged.push({ ...existingLead, ...lead });
+    } else {
+      merged.push({ ...lead });
+    }
+  });
+
+  window.leads = merged;
+  renderLeadList();
+
+  return true;
 }
 
 function renderChatThread(messages) {
@@ -269,7 +319,7 @@ function renderChatThread(messages) {
     threadEl.appendChild(row);
   });
 
-  if (threadEl.scrollTop) {
+  if (threadEl.scrollTop !== undefined) {
     threadEl.scrollTop = threadEl.scrollHeight;
   }
 }
@@ -315,8 +365,8 @@ async function sendReplyFromCRM() {
   const text = input.value.trim();
   if (!text) return;
 
-  const lead = window.S && Array.isArray(window.S.leads)
-    ? window.S.leads.find((l) => l.id === activeLeadId)
+  const lead = Array.isArray(window.leads)
+    ? window.leads.find((l) => l.id === activeLeadId)
     : null;
 
   if (!lead) return;
@@ -371,14 +421,8 @@ async function initLeadsSync() {
       cloudLeads.push(lead);
     });
 
-    // Try to apply initial leads to the app state
-    let attempts = 0;
-    const checker = setInterval(() => {
-      attempts++;
-      if (syncToUI(cloudLeads) || attempts > 30) {
-        clearInterval(checker);
-      }
-    }, 150);
+    // Apply initial leads
+    syncToUI(cloudLeads);
 
     // Real-time updates
     onSnapshot(
@@ -388,31 +432,24 @@ async function initLeadsSync() {
           const lead = parseLeadDoc(change.doc);
 
           if (change.type === "removed") {
-            const targetS = window.S || (typeof S !== "undefined" ? S : null);
-            if (targetS && Array.isArray(targetS.leads)) {
-              targetS.leads = targetS.leads.filter((l) => l.id !== lead.id);
-              if (typeof window.render === "function") window.render();
-              else if (typeof render === "function") render();
-            }
+            const currentLeads = ensureLeadState();
+            window.leads = currentLeads.filter((l) => l.id !== lead.id);
+            renderLeadList();
             return;
           }
 
           if (change.type === "added" || change.type === "modified") {
-            const targetS = window.S || (typeof S !== "undefined" ? S : null);
+            const currentLeads = ensureLeadState();
+            const idx = currentLeads.findIndex((l) => l.id === lead.id);
 
-            if (targetS && Array.isArray(targetS.leads)) {
-              const idx = targetS.leads.findIndex((l) => l.id === lead.id);
-              if (idx >= 0) {
-                targetS.leads[idx] = { ...targetS.leads[idx], ...lead };
-              } else {
-                targetS.leads.unshift(lead);
-              }
-            } else if (targetS) {
-              targetS.leads = [lead];
+            if (idx >= 0) {
+              currentLeads[idx] = { ...currentLeads[idx], ...lead };
+            } else {
+              currentLeads.unshift(lead);
             }
 
-            if (typeof window.render === "function") window.render();
-            else if (typeof render === "function") render();
+            window.leads = currentLeads;
+            renderLeadList();
           }
         });
       },
@@ -431,8 +468,11 @@ async function initLeadsSync() {
 initLeadsSync();
 
 window.addEventListener("DOMContentLoaded", () => {
-  if (document.getElementById("whatsappReplyInput")) {
-    document.getElementById("whatsappReplyInput").addEventListener("keydown", (event) => {
+  renderLeadList();
+
+  const replyInput = document.getElementById("whatsappReplyInput");
+  if (replyInput) {
+    replyInput.addEventListener("keydown", (event) => {
       if (event.key === "Enter" && !event.shiftKey) {
         event.preventDefault();
         sendReplyFromCRM();
