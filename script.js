@@ -39,28 +39,40 @@ function parseLeadDoc(doc) {
 // मुख्य ऐप स्टेट में लीड्स अपडेट करने का फंक्शन
 function syncToUI(cloudLeads) {
   const targetS = window.S || (typeof S !== "undefined" ? S : null);
-  if (targetS) {
-    targetS.leads = cloudLeads;
-    if (typeof window.fLoc !== "undefined") window.fLoc = "All";
-    else if (typeof fLoc !== "undefined") fLoc = "All";
-    
-    if (typeof window.render === "function") window.render();
-    else if (typeof render === "function") render();
-    return true;
+  if (!targetS || !Array.isArray(targetS.leads)) return false;
+
+  const merged = new Map((targetS.leads || []).map((lead) => [lead.id, lead]));
+  for (const lead of Array.isArray(cloudLeads) ? cloudLeads : []) {
+    if (!lead || !lead.id) continue;
+    merged.set(lead.id, {
+      ...(merged.get(lead.id) || {}),
+      ...lead
+    });
   }
-  return false;
+
+  targetS.leads = [...merged.values()];
+  if (typeof window.fLoc !== "undefined") window.fLoc = "All";
+  else if (typeof fLoc !== "undefined") fLoc = "All";
+
+  if (typeof window.render === "function") window.render();
+  else if (typeof render === "function") render();
+  return true;
 }
 
 async function initLeadsSync() {
   try {
     const colRef = collection(db, "hob_leads");
-    
-    // 1. ऐप लोड होते ही Firestore से सभी लीड्स लोड करें
+
     const snap = await getDocs(colRef);
     const cloudLeads = [];
-    snap.forEach(d => cloudLeads.push(parseLeadDoc(d)));
-    
-    // मुख्य ऐप स्टेट तैयार होने का इंतज़ार करके डेटा सेट करें
+    snap.forEach((d) => {
+      try {
+        cloudLeads.push(parseLeadDoc(d));
+      } catch (e) {
+        console.warn("Failed to parse Firestore lead:", d.id, e);
+      }
+    });
+
     let attempts = 0;
     const checker = setInterval(() => {
       attempts++;
@@ -69,26 +81,49 @@ async function initLeadsSync() {
       }
     }, 150);
 
-    // 2. आगे आने वाली हर नई लीड के लिए रियल-टाइम लिस्नर
     onSnapshot(colRef, (snapshot) => {
+      const targetS = window.S || (typeof S !== "undefined" ? S : null);
+
+      if (!targetS || !Array.isArray(targetS.leads)) return;
+
+      let changed = false;
+
       snapshot.docChanges().forEach((change) => {
+        const id = change.doc.id;
+
+        if (change.type === "removed") {
+          const idx = targetS.leads.findIndex((l) => l.id === id);
+          if (idx >= 0) {
+            targetS.leads.splice(idx, 1);
+            changed = true;
+          }
+          return;
+        }
+
         if (change.type === "added" || change.type === "modified") {
-          const lead = parseLeadDoc(change.doc);
-          const targetS = window.S || (typeof S !== "undefined" ? S : null);
-          if (targetS && Array.isArray(targetS.leads)) {
-            const idx = targetS.leads.findIndex(l => l.id === lead.id);
+          try {
+            const lead = parseLeadDoc(change.doc);
+            const idx = targetS.leads.findIndex((l) => l.id === lead.id);
+
             if (idx >= 0) {
               targetS.leads[idx] = { ...targetS.leads[idx], ...lead };
             } else {
               targetS.leads.unshift(lead);
             }
-            if (typeof window.render === "function") window.render();
-            else if (typeof render === "function") render();
+
+            changed = true;
+          } catch (e) {
+            console.warn("Failed to update lead from Firestore:", id, e);
           }
         }
       });
+
+      if (changed) {
+        if (typeof window.render === "function") window.render();
+        else if (typeof render === "function") render();
+      }
     });
-    
+
     console.log("Firestore permanent auto-sync active!");
   } catch (err) {
     console.error("Firestore sync error:", err);
