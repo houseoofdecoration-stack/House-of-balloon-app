@@ -1,0 +1,1 @@
+window.HOB_FB_CONFIG = {apiKey: "AIzaSyDmHZw0NogvE9CClsbWUngRROFXoVRB_aM", authDomain: "house-of-balloon-crm.firebaseapp.com", projectId: "house-of-balloon-crm", storageBucket: "house-of-balloon-crm.firebasestorage.app", messagingSenderId: "38190937524", appId: "1:38190937524:web:2e89c3e7c1f13863c12ee1"};
