@@ -22,132 +22,192 @@ const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 const leadsCol = collection(db, "hob_leads");
 
-// फ़ोन नंबर से सुरक्षित Doc ID ('p' + 10 अंक) निकालने का फ़ंक्शन
-function docIdFromLead(leadData) {
-  if (!leadData) return null;
-  const raw = leadData.phone || leadData.id || leadData.p;
-  if (!raw) return null;
-  const digits = String(raw).replace(/\D/g, "").slice(-10);
-  return digits.length === 10 ? "p" + digits : null;
-}
-
-// 1. क्लाउड में लीड सेव करने के लिए (Strict Schema: j और u)
-async function saveLeadToFirestore(leadData) {
-  try {
-    const id = docIdFromLead(leadData);
-    if (!id) {
-      console.warn("Invalid lead phone for Firestore doc ID:", leadData);
+function safeParseLeadJson(rawValue) {
+  if (!rawValue) return null;
+  if (typeof rawValue === "string") {
+    try {
+      return JSON.parse(rawValue);
+    } catch (error) {
       return null;
     }
-
-    const payload = {
-      j: JSON.stringify(leadData),
-      u: Date.now()
-    };
-
-    await setDoc(doc(db, "hob_leads", id), payload);
-    console.log("Cloud Save Success ID:", id);
-    return id;
-  } catch (e) {
-    console.error("Cloud Save Error:", e);
-    return null;
   }
+  if (typeof rawValue === "object" && !Array.isArray(rawValue)) {
+    return rawValue;
+  }
+  return null;
 }
 
-// 2. क्लाउड से सारा डेटा लोड करने के लिए (JSON Parse के साथ)
-async function loadAllLeadsFromFirestore() {
-  try {
-    const snapshot = await getDocs(leadsCol);
-    const leads = [];
-    snapshot.forEach((docSnap) => {
-      const data = docSnap.data();
-      if (!data || !data.j) return;
-      try {
-        const lead = JSON.parse(data.j);
-        leads.push({ ...lead, id: docSnap.id });
-      } catch (err) {
-        console.warn("Failed to parse lead JSON:", docSnap.id, err);
-      }
-    });
-    return leads;
-  } catch (e) {
-    console.error("Cloud Load Error:", e);
-    return [];
+function normalizeLeadForDefaultStage(leadData) {
+  const baseLead = safeParseLeadJson(leadData) || (leadData && typeof leadData === "object" ? leadData : {});
+  const nextLead = { ...baseLead };
+
+  if (!nextLead.stage && !nextLead.pipeline && !nextLead.pipe) {
+    nextLead.stage = "Today Leads";
+    nextLead.pipeline = "Today Leads";
+  } else if (!nextLead.pipeline && (nextLead.stage || nextLead.pipe)) {
+    nextLead.pipeline = nextLead.stage || nextLead.pipe;
+  } else if (!nextLead.stage && (nextLead.pipeline || nextLead.pipe)) {
+    nextLead.stage = nextLead.pipeline || nextLead.pipe;
   }
+
+  if (!nextLead.status && (nextLead.stage || nextLead.pipeline)) {
+    nextLead.status = nextLead.stage || nextLead.pipeline;
+  }
+
+  return nextLead;
 }
 
-// 3. फ़ोन नंबर से एक विशिष्ट लीड ढूँढने के लिए
-async function getLeadByPhoneFromFirestore(phone) {
-  try {
-    const digits = String(phone || "").replace(/\D/g, "").slice(-10);
-    if (digits.length !== 10) return null;
-    const id = "p" + digits;
-
-    const snap = await getDoc(doc(db, "hob_leads", id));
-    if (!snap.exists()) return null;
-
-    const data = snap.data();
-    if (!data || !data.j) return null;
-
-    return { ...JSON.parse(data.j), id: snap.id };
-  } catch (e) {
-    console.error("Cloud Get Error:", e);
-    return null;
-  }
-}
-
-// 4. लाइव ऑटो-सिंक (सभी यूज़र और डिवाइसों के लिए रियल-टाइम अपडेट)
-function listenToLeads(onUpdate) {
-  return onSnapshot(leadsCol, (snapshot) => {
-    const leads = [];
-    snapshot.forEach((docSnap) => {
-      const data = docSnap.data();
-      if (!data || !data.j) return;
-      try {
-        const lead = JSON.parse(data.j);
-        leads.push({ ...lead, id: docSnap.id });
-      } catch (err) {
-        console.warn("Failed to parse realtime JSON:", docSnap.id, err);
-      }
-    });
-    if (typeof onUpdate === "function") {
-      onUpdate(leads);
+function getDisplayLeadValue(lead, fallbackKey, ...candidates) {
+  for (const key of candidates) {
+    const value = lead && lead[key];
+    if (value !== undefined && value !== null && String(value).trim() !== "") {
+      return value;
     }
-  }, (err) => {
-    console.error("Firestore Listen Error:", err);
-  });
+  }
+  if (fallbackKey && lead && lead[fallbackKey] !== undefined && lead[fallbackKey] !== null) {
+    return lead[fallbackKey];
+  }
+  return "";
 }
 
-// पुराने और नए दोनों नामों से global window पर जोड़ना
-window.saveLeadToCloud = saveLeadToFirestore;
-window.saveLeadToFirestore = saveLeadToFirestore;
+function getLeadLatestMessage(lead) {
+  if (!lead || typeof lead !== "object") return "No messages yet";
 
-window.loadLeadsFromCloud = loadAllLeadsFromFirestore;
-window.loadAllLeadsFromFirestore = loadAllLeadsFromFirestore;
+  const messageLists = [
+    lead.messages,
+    lead.chat,
+    lead.conversation,
+    lead.chats,
+    lead.conversations,
+    lead.recentMessages,
+    lead.messageThreads
+  ];
 
-window.listenToCloudSync = listenToLeads;
-window.listenToLeads = listenToLeads;
+  for (const list of messageLists) {
+    if (!Array.isArray(list) || !list.length) continue;
+    const lastMessage = [...list].reverse().find((item) => {
+      if (!item || typeof item !== "object") return false;
+      const text = getDisplayLeadValue(item, "text", "message", "body", "content", "snippet");
+      return String(text || "").trim() !== "";
+    });
 
-window.getLeadByPhoneFromCloud = getLeadByPhoneFromFirestore;
-window.getLeadByPhoneFromFirestore = getLeadByPhoneFromFirestore;
+    if (lastMessage) {
+      const text = getDisplayLeadValue(lastMessage, "text", "message", "body", "content", "snippet");
+      if (String(text || "").trim()) return String(text).trim();
+    }
 
-const ACTIVE_TAB_KEY = "hob_active_tab";
-const CALL_OPTION_KEY = "hob_call_labels";
-const CALL_OPTION_COLORS = {
-  Green: "#15803D",
-  Red: "#B91C1C",
-  Orange: "#EA580C",
-  Blue: "#2563EB",
-  Purple: "#7C3AED",
-  Teal: "#0D9488",
-  Gray: "#6B7280"
-};
+    const fallbackText = getDisplayLeadValue(list[list.length - 1], "text", "message", "body", "content", "snippet");
+    if (String(fallbackText || "").trim()) return String(fallbackText).trim();
+  }
 
-const DEFAULT_CALL_OPTIONS = [
-  { n: "Interested", c: "Green" },
-  { n: "Not Interested", c: "Red" },
-  { n: "Wrong Number", c: "Gray" }
-];
+  const recentText = getDisplayLeadValue(lead, "lastMessage", "latestMessage", "lastText", "message", "body", "notes");
+  if (String(recentText || "").trim()) return String(recentText).trim();
+
+  return "No messages yet";
+}
+
+function getLeadLatestTimestamp(lead) {
+  if (!lead || typeof lead !== "object") return 0;
+
+  const messageLists = [
+    lead.messages,
+    lead.chat,
+    lead.conversation,
+    lead.chats,
+    lead.conversations,
+    lead.recentMessages,
+    lead.messageThreads
+  ];
+
+  let latestTs = 0;
+
+  for (const list of messageLists) {
+    if (!Array.isArray(list)) continue;
+    list.forEach((item) => {
+      if (!item || typeof item !== "object") return;
+      const candidate = getDisplayLeadValue(item, "ts", "time", "timestamp", "createdAt", "updatedAt", "date");
+      const value = Number(candidate);
+      if (Number.isFinite(value)) {
+        latestTs = Math.max(latestTs, value);
+      } else if (candidate && !Number.isNaN(Date.parse(candidate))) {
+        latestTs = Math.max(latestTs, Date.parse(candidate));
+      }
+    });
+  }
+
+  const fallbackStamp = getDisplayLeadValue(lead, "updatedAt", "ts", "lastMessageAt", "lastUpdated", "time");
+  const numeric = Number(fallbackStamp);
+  if (Number.isFinite(numeric)) {
+    latestTs = Math.max(latestTs, numeric);
+  } else if (fallbackStamp && !Number.isNaN(Date.parse(fallbackStamp))) {
+    latestTs = Math.max(latestTs, Date.parse(fallbackStamp));
+  }
+
+  return latestTs;
+}
+
+function formatChatTimestamp(rawTs) {
+  if (!rawTs) return "Just now";
+  const value = Number(rawTs);
+  const parsed = Number.isFinite(value) ? new Date(value) : new Date(rawTs);
+  if (Number.isNaN(parsed.getTime())) return "Just now";
+  return parsed.toLocaleString([], { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" });
+}
+
+function getLeadRecordName(lead, fallbackPhone) {
+  const name = getDisplayLeadValue(lead, "name", "customerName", "fullName", "leadName", "firstName");
+  if (String(name || "").trim()) {
+    return String(name).trim();
+  }
+
+  const first = getDisplayLeadValue(lead, "firstName", "fname");
+  const last = getDisplayLeadValue(lead, "lastName", "lname");
+  if (String(first || "").trim() || String(last || "").trim()) {
+    return `${String(first || "").trim()} ${String(last || "").trim()}`.trim();
+  }
+
+  return fallbackPhone || "Customer";
+}
+
+function getLeadRecordPhone(lead, fallbackDocId) {
+  const phone = getDisplayLeadValue(lead, "phone", "mobile", "number", "phoneNumber", "whatsapp");
+  if (String(phone || "").trim()) return String(phone).trim();
+  if (fallbackDocId) return String(fallbackDocId).replace(/^p/, "");
+  return "No phone";
+}
+
+function getLeadListEntries(snapshot) {
+  const entries = [];
+  snapshot.forEach((docSnap) => {
+    const leadData = docSnap.data();
+    const parsedLead = safeParseLeadJson(leadData && leadData.j) || (leadData && typeof leadData === "object" ? leadData : {});
+    if (!parsedLead || typeof parsedLead !== "object") return;
+
+    const lead = { ...parsedLead, id: docSnap.id };
+    const phone = getLeadRecordPhone(lead, docSnap.id);
+    const name = getLeadRecordName(lead, phone);
+    const latestMessage = getLeadLatestMessage(lead);
+    const latestTs = getLeadLatestTimestamp(lead);
+
+    entries.push({
+      id: docSnap.id,
+      name,
+      phone,
+      payload: lead,
+      message: latestMessage,
+      timestamp: latestTs
+    });
+  });
+  return entries.sort((a, b) => (Number(b.timestamp) || 0) - (Number(a.timestamp) || 0));
+}
+
+function docIdFromLead(leadData) {
+  if (!leadData) return null;
+  const raw = leadData.phone || leadData.mobile || leadData.number || leadData.phoneNumber || leadData.whatsapp || leadData.id || leadData.p;
+  if (!raw) return null;
+  const digits = String(raw).replace(/\D/g, "").slice(-10);
+  return digits.length === 10 ? `p${digits}` : null;
+}
 
 function normalizeCallLabel(value) {
   if (!value || typeof value !== "object") return null;
@@ -218,6 +278,121 @@ function escapeHtml(value) {
   }[char]));
 }
 
+window.chatInbox = {
+  render: () => {},
+  open: () => {},
+  show: () => {},
+  hide: () => {}
+};
+
+async function saveLeadToFirestore(leadData) {
+  try {
+    const incomingLead = leadData && typeof leadData === "object" ? leadData : {};
+    const id = docIdFromLead(incomingLead);
+    if (!id) {
+      console.warn("Invalid lead phone for Firestore doc ID:", leadData);
+      return null;
+    }
+
+    let existingLead = {};
+    try {
+      const existingSnap = await getDoc(doc(db, "hob_leads", id));
+      if (existingSnap.exists()) {
+        const existingData = existingSnap.data();
+        existingLead = safeParseLeadJson(existingData && existingData.j) || {};
+      }
+    } catch (error) {
+      console.warn("Could not read existing doc before save:", error);
+    }
+
+    const mergedLead = { ...existingLead, ...incomingLead };
+    const normalizedLead = normalizeLeadForDefaultStage(mergedLead);
+    const payload = {
+      j: JSON.stringify(normalizedLead),
+      u: Date.now()
+    };
+
+    await setDoc(doc(db, "hob_leads", id), payload);
+    console.log("Cloud Save Success ID:", id);
+    return id;
+  } catch (e) {
+    console.error("Cloud Save Error:", e);
+    return null;
+  }
+}
+
+async function loadAllLeadsFromFirestore() {
+  try {
+    const snapshot = await getDocs(leadsCol);
+    const leads = [];
+    snapshot.forEach((docSnap) => {
+      const data = docSnap.data();
+      const parsedLead = safeParseLeadJson(data && data.j) || {};
+      if (!parsedLead || typeof parsedLead !== "object") return;
+      leads.push({ ...parsedLead, id: docSnap.id });
+    });
+    return leads;
+  } catch (e) {
+    console.error("Cloud Load Error:", e);
+    return [];
+  }
+}
+
+async function getLeadByPhoneFromFirestore(phone) {
+  try {
+    const digits = String(phone || "").replace(/\D/g, "").slice(-10);
+    if (digits.length !== 10) return null;
+    const id = "p" + digits;
+
+    const snap = await getDoc(doc(db, "hob_leads", id));
+    if (!snap.exists()) return null;
+
+    const data = snap.data();
+    const parsedLead = safeParseLeadJson(data && data.j);
+    if (!parsedLead || typeof parsedLead !== "object") return null;
+
+    return { ...parsedLead, id: snap.id };
+  } catch (e) {
+    console.error("Cloud Get Error:", e);
+    return null;
+  }
+}
+
+function listenToLeads(onUpdate) {
+  return onSnapshot(leadsCol, (snapshot) => {
+    const leads = [];
+    snapshot.forEach((docSnap) => {
+      const data = docSnap.data();
+      const parsedLead = safeParseLeadJson(data && data.j) || {};
+      if (!parsedLead || typeof parsedLead !== "object") return;
+      leads.push({ ...parsedLead, id: docSnap.id });
+    });
+    if (typeof onUpdate === "function") {
+      onUpdate(leads);
+    }
+  }, (err) => {
+    console.error("Firestore Listen Error:", err);
+  });
+}
+
+const ACTIVE_TAB_KEY = "hob_active_tab";
+const CALL_OPTION_KEY = "hob_call_labels";
+const CALL_OPTION_COLORS = {
+  Green: "#15803D",
+  Red: "#B91C1C",
+  Orange: "#EA580C",
+  Blue: "#2563EB",
+  Purple: "#7C3AED",
+  Teal: "#0D9488",
+  Gray: "#6B7280"
+};
+
+const DEFAULT_CALL_OPTIONS = [
+  { n: "Interested", c: "Green" },
+  { n: "Not Interested", c: "Red" },
+  { n: "Wrong Number", c: "Gray" }
+];
+
 function installCallLabelUI() {
   const sheet = document.querySelector("#dsp");
   if (!sheet) return;
@@ -234,9 +409,10 @@ function installCallLabelUI() {
       </div>
       ${options.map((option, index) => {
         const color = CALL_OPTION_COLORS[option.c] || CALL_OPTION_COLORS.Gray;
+        const selected = window.DS && window.DS.st === option.n;
         return `
           <div class="row" style="margin-top:6px;gap:6px;align-items:center;">
-            <button class="op${(window.DS && window.DS.st === option.n) ? " on" : ""}" data-a="pickcallopt" data-v="${escapeHtml(option.n)}" style="--oc:${color};flex:1" aria-pressed="${window.DS && window.DS.st === option.n ? "true" : "false"}">${escapeHtml(option.n)}</button>
+            <button class="op${selected ? " on" : ""}" data-a="pickcallopt" data-v="${escapeHtml(option.n)}" style="--oc:${color};flex:1" aria-pressed="${selected ? "true" : "false"}">${escapeHtml(option.n)}</button>
             <button class="ib" data-a="editcallopt" data-i="${index}" title="Edit ${escapeHtml(option.n)}" aria-label="Edit ${escapeHtml(option.n)}">✏️</button>
           </div>
         `;
@@ -318,6 +494,18 @@ function restoreActiveTab() {
     try { window.render(); } catch (error) { console.warn("Could not restore saved tab:", error); }
   }
 }
+
+window.saveLeadToCloud = saveLeadToFirestore;
+window.saveLeadToFirestore = saveLeadToFirestore;
+
+window.loadLeadsFromCloud = loadAllLeadsFromFirestore;
+window.loadAllLeadsFromFirestore = loadAllLeadsFromFirestore;
+
+window.listenToCloudSync = listenToLeads;
+window.listenToLeads = listenToLeads;
+
+window.getLeadByPhoneFromCloud = getLeadByPhoneFromFirestore;
+window.getLeadByPhoneFromFirestore = getLeadByPhoneFromFirestore;
 
 document.addEventListener("click", async (event) => {
   const actionTarget = event.target.closest("[data-a]");
@@ -415,8 +603,6 @@ window.addEventListener("load", () => {
   setTimeout(() => installCallLabelUI(), 150);
 });
 
-// Keep the app's native tab flow intact; this code only adds safe persistence and call-label management.
-
 window.addEventListener("input", (event) => {
   const nameInput = event.target.closest("#hob_call_name_input");
   if (!nameInput || !window.DS || !window.leadOf) return;
@@ -439,4 +625,20 @@ if (document.readyState !== "loading") {
   restoreActiveTab();
 }
 
-// Safety: keep all existing hob_leads documents untouched and follow the existing strict schema on writes.
+export {
+  saveLeadToFirestore,
+  loadAllLeadsFromFirestore,
+  getLeadByPhoneFromFirestore,
+  listenToLeads,
+  normalizeLeadForDefaultStage,
+  getLeadListEntries,
+  getLeadLatestMessage,
+  getLeadLatestTimestamp,
+  formatChatTimestamp,
+  getLeadRecordName,
+  getLeadRecordPhone,
+  docIdFromLead,
+  readCallLabelOptions,
+  writeCallLabelOptions,
+  syncCallLabelOptionsToMeta
+};
