@@ -819,7 +819,7 @@ const usersReady=new Promise(r=>{uRes=r});
 const SESS="hobsess",SESS_MS=30*864e5;
 const cur=()=>{const x=getJ(SESS,null);return x?(USERS.find(y=>y.u===x.u)||null):null};
 const isAdmin=()=>{const R=getJ("hobrole",null);if(R&&R.uid)return !!R.a;return !USERS.length||!!(cur()&&cur().a)};
-async function roleSave(FA,u){try{const x=FA&&FA.auth.currentUser;if(!x)return;const t=await FA.getDoc(FA.doc(FA.db,"hob_meta","team_"+x.uid));setLS("hobrole",{uid:x.uid,a:!!(t.exists()&&t.data().a),f:!!(t.exists()&&t.data().f),u:u||((t.exists()&&t.data().u)||"")})}catch(e){}}
+async function roleSave(FA,u){try{const x=FA&&FA.auth.currentUser;if(!x)return;const t=await FA.getDoc(FA.doc(FA.db,"hob_meta","team_"+x.uid));setLS("hobrole",{uid:x.uid,a:!!(t.exists()&&t.data().a),f:!!(t.exists()&&t.data().f),n:(t.exists()&&t.data().n)||"",u:u||((t.exists()&&t.data().u)||"")})}catch(e){}}
 const lkey=u=>"login_"+String(u).toLowerCase().replace(/[^a-z0-9@._-]/g,"_");
 const fbErr=x=>{const c=(x&&x.code)||"";return c==="auth/operation-not-allowed"?"Email/Password login is not turned on in Firebase (Authentication → Sign-in method).":c==="auth/network-request-failed"?"No internet. Check your connection and try again.":c==="auth/too-many-requests"?"Too many attempts. Wait a few minutes and try again.":c==="auth/requires-recent-login"?"Please log out and log in again, then try once more.":c==="permission-denied"?"Not allowed. Only an admin can do this.":((x&&x.message)||String(x))};
 const isMail=u=>/^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(String(u||""));
@@ -1466,7 +1466,7 @@ document.addEventListener("click",e=>{
       const me=cur(),wasMe=i>=0&&me&&me.u===USERS[i].u; let rec=i>=0?{...USERS[i]}:{}; const oldU=rec.u,FA=await window.fbAuth;
       if(FA){try{const D=(c,id)=>FA.doc(FA.db,c,id);
         if(p&&wasMe&&rec.uid){await FA.updatePw(p)}
-        else if(p){const {uid,em}=await mkAcct(FA,u,p,true);if(rec.uid&&rec.uid!==uid)await FA.deleteDoc(D("hob_meta","team_"+rec.uid)).catch(()=>{});rec.uid=uid;rec.em=em;delete rec.s;delete rec.i;delete rec.h}
+        else if(p){const ou=rec.uid,{uid,em}=await mkAcct(FA,u,p,true);if(ou&&ou!==uid)setTimeout(()=>reAg(ou,uid),300);if(rec.uid&&rec.uid!==uid)await FA.deleteDoc(D("hob_meta","team_"+rec.uid)).catch(()=>{});rec.uid=uid;rec.em=em;delete rec.s;delete rec.i;delete rec.h}
         if(rec.uid){await FA.setDoc(D("hob_meta","team_"+rec.uid),{u,n:n||u,a:ad,f:fld,em:rec.em||""});
           if(oldU&&oldU!==u)await FA.deleteDoc(D("hob_meta",lkey(oldU))).catch(()=>{});
           await FA.setDoc(D("hob_meta",lkey(u)),{em:rec.em||""})}
@@ -1648,13 +1648,15 @@ async function jobS(o,withPh){const C=await window.cloudReady;if(!C){ftoast("Int
 async function jobDel(id){const C=await window.cloudReady;if(!C)return;try{await C.deleteDoc(C.doc(C.db,"hob_jobs",id));JOBS.delete(id)}catch(e){alert("Delete nahi hua: "+fbErr(e))}}
 function brief(j){const ret=j.ty==="Return";return [`🎈 *${ret?"RETURN":"SETUP"}* · ${dshort(jAt(j))}, ${hm(jAt(j))}`,`👤 ${j.c||""}`,`📞 ${j.p1||""}${j.p2?"  |  Site: "+j.p2:""}`,`📍 ${j.ad||""}${j.loc?" ("+j.loc+")":""}`,`🗺 ${mapL(j.ad)}`,j.th?`🎨 ${j.th}`:"",Number(j.pay)>0?`💰 Customer se lena hai: ${inr(j.pay)}`:"",(j.items||[]).length?`🧺 ${ret?"Wapas laana":"Saaman"}:\n`+(j.items||[]).map(x=>"• "+x).join("\n"):"",j.note?`📝 ${j.note}`:""].filter(Boolean).join("\n")}
 
+/* new password = new login id: move that person's leads and jobs to the new id */
+async function reAg(o,n){try{S.leads.forEach(l=>{if(l.ag===o)l.ag=n});save();jobsStart();for(let i=0;i<20&&!JREADY;i++)await new Promise(r=>setTimeout(r,300));for(const j of [...JOBS.values()].filter(j=>j.ag===o)){j.ag=n;await jobPut(j)}}catch(e){console.warn("reAg",e)}}
 /* ---------- Owner: Field tab ---------- */
 function fieldTab(){if(!isAdmin())return `<div class="card">Ye page sirf owner ke liye hai.</div>`;jobsStart();
   const B=broList(),sub=`<div class="chips">${[["jobs","📋 Jobs"],["bros","🧑‍🔧 HoB Brothers "+B.length],["cfg","⚙️ Setting"]].map(([k,t])=>`<button class="chip${fSub===k?" on":""}" data-fa="fsub" data-v="${k}">${t}</button>`).join("")}</div>`;
   if(fSub==="bros")return `<h1>🎈 Field Team</h1>${sub}<div class="tag" style="margin:2px 0 8px">HoB Brother ko sirf uski <b>aaj ki</b> setup aur return jobs dikhti hain. Leads, chats aur dusron ka kaam nahi.</div>`+(B.map(x=>{const i=USERS.indexOf(x),n=[...JOBS.values()].filter(j=>j.ag===x.uid&&sod(jAt(j))===sod(Date.now())).length;return `<div class="card fbr"><div class="grow"><b>${esc(x.n||x.u)}</b><div class="tag">Login: ${esc(x.u)} · Aaj ${n} kaam</div></div><button class="ib" data-a="usr" data-i="${i}" aria-label="Edit">✏️</button></div>`}).join("")||`<div class="card mute">Abhi koi HoB Brother nahi hai. Neeche + dabakar banayein.</div>`)+`<button class="ffab" data-fa="broadd">+ Brother</button>`;
   if(fSub==="cfg")return `<h1>🎈 Field Team</h1>${sub}<div class="card"><label>Return job kab (default)</label><select id="frn"><option value="1"${FCFG.rn==1?" selected":""}>Agle din subah</option><option value="0"${FCFG.rn==0?" selected":""}>Usi din raat</option></select><label>Return ka time</label><input id="frt" type="time" value="${esc(FCFG.rt||"10:00")}"><label>Alarm kitna pehle bajega</label><select id="fal">${[30,45,60,90,120].map(m=>`<option value="${m}"${Number(FCFG.al)===m?" selected":""}>${m} minute pehle</option>`).join("")}</select><div class="tag">Alarm har 5 minute dobara bajega jab tak brother "Dekh liya" nahi dabata.</div><button class="save" data-fa="cfgsave">Save</button></div>`;
-  const t0=sod(Date.now()),d0=sod(t0+jDay*864e5+36e5*2),d1=sod(d0+864e5+36e5*2),A=[...JOBS.values()].filter(j=>jAt(j)>=d0&&jAt(j)<d1),un=A.filter(j=>!j.ag).length;
-  const L=A.filter(j=>jBro==="all"||(jBro==="none"?!j.ag:j.ag===jBro)).sort((a,b)=>jAt(a)-jAt(b));
+  const t0=sod(Date.now()),d0=sod(t0+jDay*864e5+36e5*2),d1=sod(d0+864e5+36e5*2),A=[...JOBS.values()].filter(j=>jAt(j)>=d0&&jAt(j)<d1),un=A.filter(j=>!j.ag||!broName(j.ag)).length;
+  const L=A.filter(j=>jBro==="all"||(jBro==="none"?(!j.ag||!broName(j.ag)):j.ag===jBro)).sort((a,b)=>jAt(a)-jAt(b));
   const dl=k=>k===0?"Aaj":k===1?"Kal":k===-1?"Beeta kal":dshort(t0+k*864e5+36e5*2);
   const pend=A.filter(j=>Number(j.pay)>0&&!(j.s||{}).paid).reduce((s,j)=>s+Number(j.pay),0);
   return `<h1>🎈 Field Team</h1>${sub}
@@ -1664,10 +1666,10 @@ function fieldTab(){if(!isAdmin())return `<div class="card">Ye page sirf owner k
   ${!JREADY?`<div class="card mute">Jobs load ho rahi hain…</div>`:L.map(ojCard).join("")||`<div class="card mute">Is din koi job nahi. Neeche "+ Job" dabayein.</div>`}
   <button class="ffab" data-fa="jnew">+ Job</button>`}
 function ojCard(j){const s=j.s||{},st=jSt(j),ret=j.ty==="Return",due=jAt(j)-(Number(j.al)||60)*6e4,pay=Number(j.pay)||0;
-  const stt=st?STP[Math.min(st,3)-1]:"⏳ Shuru nahi",ak=s.ack?`🔔 Dekha ${hm(s.ack)}`:(Date.now()>due&&st<3&&j.ag?`<b style="color:#dc2626">🔕 Alarm nahi dekha</b>`:"");
+  const stt=st?STP[Math.min(st,3)-1]:"⏳ Shuru nahi",ak=s.ack?`🔔 Dekha ${hm(s.ack)}`:(Date.now()>due&&st<3&&j.ag&&broName(j.ag)?`<b style="color:#dc2626">🔕 Alarm nahi dekha</b>`:"");
   return `<div class="fj${ret?" ret":""}${st>=3?" dn":""}"><div class="fjh"><span class="fbd${ret?" r":""}">${ret?"↩ RETURN":"🎈 SETUP"}</span><b>${hm(jAt(j))}</b></div>
   <b class="fjn">${esc(j.c||"")}</b><div class="tag">📍 ${esc(j.ad||"")}${j.loc?" · "+esc(j.loc):""}</div>
-  <div class="tag">🧑‍🔧 ${j.ag?`<b>${esc(broName(j.ag)||"?")}</b>`:`<b style="color:#dc2626">Kisi ko nahi diya</b>`} · ${stt}${ak?" · "+ak:""}${pay?` · ${s.paid?`<b style="color:#16a34a">💰 ${inr(pay)} mila</b>`:`<b style="color:#dc2626">💰 ${inr(pay)} baaki</b>`}`:""}</div>
+  <div class="tag">🧑‍🔧 ${j.ag&&broName(j.ag)?`<b>${esc(broName(j.ag))}</b>`:`<b style="color:#dc2626">${j.ag?"Brother hata diya gaya – kisi aur ko do":"Kisi ko nahi diya"}</b>`} · ${stt}${ak?" · "+ak:""}${pay?` · ${s.paid?`<b style="color:#16a34a">💰 ${inr(pay)} mila</b>`:`<b style="color:#dc2626">💰 ${inr(pay)} baaki</b>`}`:""}</div>
   ${j.ph?`<img class="fjp" src="${esc(j.ph)}" alt="Setup photo" data-fa="jphv" data-id="${j.id}">`:""}
   <div class="fja"><button data-fa="jedit" data-id="${j.id}">✏️ Edit</button><button class="p" data-fa="jasg" data-id="${j.id}">🔁 ${j.ag?"Dusre ko do":"Brother do"}</button><button data-fa="jshare" data-id="${j.id}" aria-label="WhatsApp par brief bhejo">💬</button><button class="d" data-fa="jdel" data-id="${j.id}" aria-label="Delete">🗑</button></div></div>`}
 function jobForm(o,isNew){const B=broList(),ret=o.ty==="Return",at=jAt(o)||sod(Date.now()+864e5)+16*36e5,rAt=retAt(at);
@@ -1706,10 +1708,10 @@ function photoView(j){sheet(`<h2 style="margin-top:0">📷 ${esc(j.c)}</h2><img 
 
 /* ---------- HoB Brother screen ---------- */
 function broHome(){jobsStart();const me=myUid(),R=getJ("hobrole",{})||{},t0=sod(Date.now()),L=[...JOBS.values()].filter(j=>j.ag===me&&sod(jAt(j))===t0).sort((a,b)=>jAt(a)-jAt(b)),left=L.filter(j=>jSt(j)<3).length;
-  const np=window.Notification&&Notification.permission!=="granted";
+  const np=(window.Notification&&Notification.permission!=="granted")||!AUDC||AUDC.state!=="running";
   return `<div class="brand"><img class="lg" src="${LOGO}" width="34" height="34" alt="House of Balloons"><b>House of Balloons</b><span>HoB Brother</span><button class="ib mnu" data-fa="jout" aria-label="Logout">⏻</button></div>
-  <h1 style="margin:6px 0 0">Namaste ${esc(broName(me)||R.u||"")} 👋</h1><div class="tag">Aaj · ${new Date().toLocaleDateString("en-IN",{weekday:"long",day:"numeric",month:"short"})} · ${L.length} kaam${left&&L.length?` · ${left} baaki`:""}</div>
-  ${np?`<div class="card fnt">🔔 Alarm ke liye notification on karein.<button class="save" data-fa="jnotif">🔔 Alarm on karo</button></div>`:""}
+  <h1 style="margin:6px 0 0">Namaste ${esc(broName(me)||R.n||R.u||"")} 👋</h1><div class="tag">Aaj · ${new Date().toLocaleDateString("en-IN",{weekday:"long",day:"numeric",month:"short"})} · ${L.length} kaam${left&&L.length?` · ${left} baaki`:""}</div>
+  ${np?`<div class="card fnt">🔔 Alarm ki awaaz aur notification ke liye ye button ek baar dabayein (har baar app kholne par).<button class="save" data-fa="jnotif">🔔 Alarm on karo</button></div>`:""}
   ${!JREADY?`<div class="card mute">Load ho raha hai…</div>`:L.map(bjCard).join("")||`<div class="card" style="text-align:center;font-size:17px">Aaj koi kaam nahi 🎉</div>`}
   <div class="tag" style="text-align:center;margin:14px 0 30px">🔒 Yahan sirf aapke aaj ke kaam dikhte hain.</div>`}
 function bjCard(j){const s=j.s||{},st=jSt(j),ret=j.ty==="Return",o=jOpen===j.id,pay=Number(j.pay)||0,chk=new Set(s.chk||[]),its=j.items||[];
@@ -1726,7 +1728,7 @@ function bjCard(j){const s=j.s||{},st=jSt(j),ret=j.ty==="Return",o=jOpen===j.id,
 function broNew(o){ftoast("🆕 Nayi job mili: "+o.c+" "+hm(jAt(o)));beep(3);sysNotif("🆕 Nayi job – "+hm(jAt(o)),o.c+" · "+(o.ad||""),"new-"+o.id)}
 /* alarm: rings before the job until the brother taps "Dekh liya", again every 5 minutes */
 function audioUnlock(){try{AUDC=AUDC||new (window.AudioContext||window.webkitAudioContext)();if(AUDC.state!=="running")AUDC.resume()}catch(e){}}
-document.addEventListener("pointerdown",()=>{if(isField())audioUnlock()},true);
+document.addEventListener("pointerdown",()=>{if(isField()){const w=!AUDC||AUDC.state!=="running";audioUnlock();if(w)setTimeout(()=>{LASTH="";render()},400)}},true);
 function beep(n){try{audioUnlock();if(AUDC){const t=AUDC.currentTime;for(let i=0;i<(n||6);i++){const o=AUDC.createOscillator(),g=AUDC.createGain();o.type="square";o.frequency.value=i%2?1100:880;g.gain.value=.5;o.connect(g);g.connect(AUDC.destination);o.start(t+i*.3);o.stop(t+i*.3+.22)}}}catch(e){}try{navigator.vibrate&&navigator.vibrate([500,200,500,200,500])}catch(e){}}
 async function sysNotif(title,body,tag){try{if(!window.Notification||Notification.permission!=="granted")return;const op={body,icon:"icon-192.png",tag,renotify:true,requireInteraction:true,vibrate:[500,200,500,200,500]};
   const r=navigator.serviceWorker&&await Promise.race([navigator.serviceWorker.getRegistration(),new Promise(z=>setTimeout(()=>z(null),800))]);if(r&&r.showNotification){await r.showNotification(title,op);return}new Notification(title,op)}catch(e){}}
@@ -1770,6 +1772,7 @@ document.addEventListener("click",e=>{const a=e.target.closest("[data-fa]");if(!
   }});
 
 function render(){
+  if(tab==="field"&&unlocked&&!isField()&&!isAdmin())tab="chats";
   if(unlocked&&isField()){$("nav").style.display="none";const bh=broHome();if(bh!==LASTH){$("#app").innerHTML=bh;LASTH=bh}return}
   if(!unlocked) return;
   if(selMode&&(tab!=="chats"||openId)){selMode=false;SEL.clear()}
